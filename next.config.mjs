@@ -6,7 +6,7 @@ const nextConfig = {
       config.watchOptions = {
         ...(config.watchOptions || {}),
         ignored:
-          /(^|[\\/])(?:node_modules|\.git)([\\/]|$)|[\\/]DumpStack\.log\.tmp$|[\\/]hiberfil\.sys$|[\\/]pagefile\.sys$|[\\/]swapfile\.sys$|[\\/]System Volume Information([\\/]|$)/
+          /(^|[\\/])(?:node_modules|\.git|\.cursor|\.antigravity|\.kiro)([\\/]|$)|[\\/]DumpStack\.log\.tmp$|[\\/]hiberfil\.sys$|[\\/]pagefile\.sys$|[\\/]swapfile\.sys$|[\\/]System Volume Information([\\/]|$)/
       };
     }
     return config;

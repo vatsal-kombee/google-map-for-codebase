@@ -32,8 +32,28 @@ export async function GET(req: Request) {
     const decoded = Buffer.from(contentBase64, "base64").toString("utf-8");
     return NextResponse.json({ content: decoded });
   } catch (e) {
+    // Octokit wraps HTTP errors as objects with a numeric `status` field.
+    const status = (e != null && typeof e === "object" && "status" in e)
+      ? (e as { status: unknown }).status
+      : undefined;
+
+    if (status === 429) {
+      const retryAfter =
+        (e != null && typeof e === "object" && "response" in e)
+          ? ((e as { response?: { headers?: Record<string, string> } }).response?.headers?.["retry-after"] ?? "60")
+          : "60";
+      return NextResponse.json(
+        { error: "GitHub API rate limit exceeded — try again shortly." },
+        { status: 429, headers: { "Retry-After": retryAfter } }
+      );
+    }
+
+    if (status === 403) {
+      return NextResponse.json({ error: "GitHub API forbidden — check your GITHUB_TOKEN." }, { status: 403 });
+    }
+
     const message = e instanceof Error ? e.message : "Unknown error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: message }, { status: typeof status === "number" ? status : 500 });
   }
 }
 

@@ -21,6 +21,25 @@ async function getBranchCommitSha(owner: string, repo: string, branch: string) {
   return data.commit.sha;
 }
 
+const SKIP_DIRS = [
+  "node_modules/",
+  "vendor/",
+  ".git/",
+  ".next/",
+  "dist/",
+  "build/",
+  "out/",
+  ".cache/",
+  "cache/",
+  "storage/logs/",
+  "storage/framework/cache/",
+  ".cursor/",
+  ".antigravity/",
+  ".kiro/",
+  "tmp/",
+  "temp/"
+];
+
 async function getRecursiveTree(owner: string, repo: string, branch: string): Promise<GitHubTreeItem[]> {
   const octokit = getOctokit();
   // The Trees API requires a tree SHA (or commit SHA), not a branch name.
@@ -29,7 +48,19 @@ async function getRecursiveTree(owner: string, repo: string, branch: string): Pr
   const { data } = await octokit.git.getTree({ owner, repo, tree_sha: commitSha, recursive: "true" });
   const tree = data.tree ?? [];
   return tree
-    .filter((t) => typeof t.path === "string" && (t.type === "blob" || t.type === "tree"))
+    .filter((t) => {
+      if (typeof t.path !== "string") return false;
+      if (t.type !== "blob" && t.type !== "tree") return false;
+      
+      // Filter out ignored paths
+      if (SKIP_DIRS.some(p => t.path!.includes(p) || t.path!.startsWith(p))) return false;
+      
+      // Filter out hidden files (except common config ones)
+      const base = t.path!.split("/").pop() || "";
+      if (base.startsWith(".") && base !== ".env.example" && !t.path!.startsWith(".github/")) return false;
+
+      return true;
+    })
     .map((t) => ({ path: t.path!, type: t.type as "blob" | "tree" }));
 }
 

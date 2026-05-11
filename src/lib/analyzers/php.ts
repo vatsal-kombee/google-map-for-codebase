@@ -1,4 +1,5 @@
 import type { LanguageAdapter } from "./types";
+import { findBraceBlockEnd } from "./blockEnd";
 
 export const phpAdapter: LanguageAdapter = {
   id: "php",
@@ -12,6 +13,30 @@ export const phpAdapter: LanguageAdapter = {
       imports.push(match[1]!);
     }
     return [...new Set(imports)];
+  },
+  extractSymbols: (content: string) => {
+    const symbols: any[] = [];
+    const lines = content.split("\n");
+
+    // 1. Classes/Interfaces/Traits
+    for (const match of content.matchAll(/^\s*(?:abstract\s+|final\s+)?(?:class|interface|trait)\s+([a-zA-Z0-9_$]+)/gm)) {
+      const lineIndex = content.substring(0, match.index!).split("\n").length;
+      symbols.push({ name: match[1], type: "class", startLine: lineIndex });
+    }
+
+    // 2. Functions/Methods
+    for (const match of content.matchAll(/^\s*(?:public\s+|private\s+|protected\s+)?(?:static\s+)?function\s+([a-zA-Z0-9_$]+)/gm)) {
+      const lineIndex = content.substring(0, match.index!).split("\n").length;
+      symbols.push({ name: match[1], type: "function", startLine: lineIndex });
+    }
+
+    // Sort and resolve accurate endLines via brace-matching
+    symbols.sort((a, b) => a.startLine - b.startLine);
+    for (const s of symbols) {
+      s.endLine = findBraceBlockEnd(lines, s.startLine);
+    }
+
+    return symbols;
   },
   resolveImport: ({ importPath, fromFile, filePathSet }) => {
     // For now: only relative path includes (best-effort)
