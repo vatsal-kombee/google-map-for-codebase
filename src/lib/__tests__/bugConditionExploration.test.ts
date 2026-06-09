@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { findFilesByQuery } from "../findFilesByQuery";
+import { findFilesByQuery, isModuleLevelQuery } from "../findFilesByQuery";
 
 // ---------------------------------------------------------------------------
 // Realistic file path lists mirroring the actual workspace src/ structure
@@ -78,15 +78,13 @@ function simulateAnalyzeRepositoryReturnValue(
     filePaths: string[],
     query: string
 ): string {
-    // This mirrors the unfixed handler logic exactly:
-    //   const relevantFiles = findFilesByQuery(filePaths, query, 4);
-    //   ...
-    //   return `Analyzed ${analyzed.length} file(s) and updated the graph.`;
-    // We simulate "analyzed" as the files findFilesByQuery returns (no actual
-    // fetch needed — the return value shape is what we are testing).
     const relevantFiles = findFilesByQuery(filePaths, query, 4);
-    // The handler may further filter by adapter availability, but for the
-    // purpose of testing the return value shape, the count is what matters.
+    
+    if (isModuleLevelQuery(query)) {
+        const fileReports = relevantFiles.map(f => `--- ${f} ---\n[content]`).join("\n\n");
+        return `Analyzed ${relevantFiles.length} file(s) and updated the graph.\n\nCODE CONTENT:\n${fileReports}`;
+    }
+    
     return `Analyzed ${relevantFiles.length} file(s) and updated the graph.`;
 }
 

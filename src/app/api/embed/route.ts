@@ -28,6 +28,14 @@ export const POST = async (req: NextRequest) => {
     const batchSize = 5; 
     const allEmbeddings: number[][] = [];
 
+    // NVIDIA nv-embedqa-e5-v5 has a strict 512-token limit.
+    // Extremely dense code can have a low character-to-token ratio (e.g. ~1.5 chars/token),
+    // so we limit input to 600 characters to be absolutely safe from 400 Bad Request errors.
+    let maxChars = 8000;
+    if (model.includes("nvidia") || model.toLowerCase().includes("e5")) {
+      maxChars = 600;
+    }
+
     for (let i = 0; i < texts.length; i += batchSize) {
       const batch = texts.slice(i, i + batchSize);
       
@@ -45,7 +53,7 @@ export const POST = async (req: NextRequest) => {
         try {
           const response = await openai.embeddings.create({
             model,
-            input: batch.map((t) => t.slice(0, 8000)),
+            input: batch.map((t) => t.slice(0, maxChars)),
             ...extraParams
           } as any);
 

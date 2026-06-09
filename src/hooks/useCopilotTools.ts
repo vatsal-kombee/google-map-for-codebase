@@ -5,7 +5,7 @@ import { z } from "zod";
 import { useFrontendTool } from "@copilotkit/react-core/v2";
 import { useAppStore } from "@/store/appStore";
 import { fetchFileCached, type FetchFileArgs } from "@/lib/fetchFileCached";
-import { findFilesByQuery } from "@/lib/findFilesByQuery";
+import { findFilesByQuery, isModuleLevelQuery } from "@/lib/findFilesByQuery";
 import { searchContent } from "@/lib/searchContent";
 import { buildDependencyGraph } from "@/lib/graph";
 import { languageAdapters } from "@/lib/analyzers";
@@ -161,16 +161,28 @@ export function useCopilotTools() {
           }
 
           setToolActivity(`Reading ${[...fileToAdapter.keys()].length} file(s)…`);
-          const analyzed = await Promise.all(
+          const results = await Promise.all(
             [...fileToAdapter.entries()].map(async ([path, adapter]) => {
-              const content = await withTimeout(
-                fetchFileCached(buildFetchArgs(path, ctx?.signal)),
-                8000,
-                ""
-              );
-              return { path, content, imports: adapter.extractImports(content) };
+              try {
+                const content = await withTimeout(
+                  fetchFileCached(buildFetchArgs(path, ctx?.signal)),
+                  8000,
+                  ""
+                );
+                return { path, content, imports: adapter.extractImports(content), error: null };
+              } catch (e) {
+                return {
+                  path,
+                  content: "",
+                  imports: [] as string[],
+                  error: e instanceof Error ? e.message : "Failed to load"
+                };
+              }
             })
           );
+
+          const analyzed = results.map((r) => ({ path: r.path, content: r.content, imports: r.imports }));
+          const failures = results.filter((r) => r.error).map((r) => `${r.path} (${r.error})`);
 
           setToolActivity("Mapping dependencies…");
           const graph = buildDependencyGraph({
@@ -196,8 +208,24 @@ export function useCopilotTools() {
           }
 
           setToolActivity(null);
-          const fileReports = analyzed.map(f => `--- ${f.path} ---\n${f.content.slice(0, 8000)}${f.content.length > 8000 ? "\n[truncated — use fetchFileContent to read more]" : ""}`).join("\n\n");
-          return `Analyzed ${analyzed.length} file(s).\n\nCODE CONTENT:\n${fileReports}`;
+          
+          if (isModuleLevelQuery(query)) {
+            const fileReports = analyzed
+              .filter(f => f.content)
+              .map(f => `--- ${f.path} ---\n${f.content.slice(0, 8000)}${f.content.length > 8000 ? "\n[truncated — use fetchFileContent to read more]" : ""}`)
+              .join("\n\n");
+            let detailedMsg = `Analyzed ${analyzed.length} file(s) and updated the graph.\n\nCODE CONTENT:\n${fileReports}`;
+            if (failures.length > 0) {
+              detailedMsg += `\n\nFailed to load some files:\n- ${failures.join("\n- ")}`;
+            }
+            return detailedMsg;
+          }
+
+          let summaryMsg = `Analyzed ${analyzed.length} file(s) and updated the graph.`;
+          if (failures.length > 0) {
+            summaryMsg += ` (Note: failed to load ${failures.length} file(s))`;
+          }
+          return summaryMsg;
         } catch (e) {
           const msg = e instanceof Error ? e.message : "Unknown error";
           setAnalysis({ loading: false, error: msg });
@@ -222,11 +250,17 @@ export function useCopilotTools() {
       handler: async ({ filePath, startLine, endLine }, ctx) => {
         if (!isLoaded) return "No repository loaded.";
         setToolActivity(`Reading ${filePath}…`);
-        const content = await withTimeout(
-          fetchFileCached(buildFetchArgs(filePath, ctx?.signal)),
-          8000,
-          ""
-        );
+        let content = "";
+        try {
+          content = await withTimeout(
+            fetchFileCached(buildFetchArgs(filePath, ctx?.signal)),
+            8000,
+            ""
+          );
+        } catch (e) {
+          setToolActivity(null);
+          return `Failed to load file ${filePath}: ${e instanceof Error ? e.message : "Unknown error"}`;
+        }
         setToolActivity(null);
         if (!content) return `Failed to load ${filePath} (timeout or empty).`;
         setCodeViewer(filePath, content);
@@ -263,11 +297,17 @@ export function useCopilotTools() {
       handler: async ({ filePath, lines, explanation }, ctx) => {
         if (!isLoaded) return "No repository loaded.";
         setToolActivity(`Opening ${filePath} and highlighting ${lines.length} line(s)…`);
-        const content = await withTimeout(
-          fetchFileCached(buildFetchArgs(filePath, ctx?.signal)),
-          8000,
-          ""
-        );
+        let content = "";
+        try {
+          content = await withTimeout(
+            fetchFileCached(buildFetchArgs(filePath, ctx?.signal)),
+            8000,
+            ""
+          );
+        } catch (e) {
+          setToolActivity(null);
+          return `Failed to highlight code in ${filePath}: ${e instanceof Error ? e.message : "Unknown error"}`;
+        }
         setToolActivity(null);
         if (!content) return `Failed to load ${filePath} (timeout or empty).`;
         setCodeViewer(filePath, content, { lines, explanation });
@@ -292,14 +332,25 @@ export function useCopilotTools() {
         const filePathSet = new Set(filePaths);
 
         setToolActivity(`Reading ${capped.length} file(s) to build dependency graph…`);
-        const analyzed = await Promise.all(
+        const results = await Promise.all(
           capped.map(async (path) => {
             const adapter = languageAdapters.find((a) => a.canAnalyzePath(path));
-            if (!adapter) return { path, imports: [] as string[] };
-            const content = await fetchFileCached(buildFetchArgs(path, ctx?.signal));
-            return { path, imports: adapter.extractImports(content) };
+            if (!adapter) return { path, imports: [] as string[], error: null };
+            try {
+              const content = await fetchFileCached(buildFetchArgs(path, ctx?.signal));
+              return { path, imports: adapter.extractImports(content), error: null };
+            } catch (e) {
+              return {
+                path,
+                imports: [] as string[],
+                error: e instanceof Error ? e.message : "Failed to load"
+              };
+            }
           })
         );
+
+        const analyzed = results.map((r) => ({ path: r.path, imports: r.imports }));
+        const failures = results.filter((r) => r.error).map((r) => `${r.path} (${r.error})`);
 
         if (diagramType === "architecture") {
           setToolActivity(null);
@@ -317,7 +368,12 @@ export function useCopilotTools() {
         });
         setVisualization(graph.nodes, graph.edges, "dependency");
         setToolActivity(null);
-        return `Generated dependency graph for ${analyzed.length} files.`;
+
+        let msg = `Generated dependency graph for ${analyzed.length} files.`;
+        if (failures.length > 0) {
+          msg += `\n\nFailed to load some files:\n- ${failures.join("\n- ")}`;
+        }
+        return msg;
       }
     },
     [isLoaded, buildFetchArgs, filePaths, setVisualization, setToolActivity]

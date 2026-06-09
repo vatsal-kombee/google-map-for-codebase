@@ -25,9 +25,65 @@ const CATEGORY_RULES: Array<{
     }
   ];
 
+export function isModuleLevelQuery(query: string): boolean {
+  const q = query.toLowerCase();
+  return (
+    /explain\s+.+module/.test(q) ||
+    /how does\s+.+module/.test(q) ||
+    /explain entire/.test(q) ||
+    /walk me through/.test(q) ||
+    /overview of/.test(q) ||
+    /describe the\s+.+module/.test(q) ||
+    /whole module/.test(q) ||
+    /entire module/.test(q)
+  );
+}
+
 export function findFilesByQuery(filePaths: string[], query: string, limit = 20): string[] {
   const q = query.trim().toLowerCase();
   if (!q) return [];
+
+  if (isModuleLevelQuery(query)) {
+    // Extract target directory/module name
+    // Find all unique directory segments from filePaths
+    const allSegments = new Set<string>();
+    for (const p of filePaths) {
+      const parts = p.split(/[/\\]/);
+      // Remove filename
+      parts.pop();
+      for (const part of parts) {
+        if (part && part.toLowerCase() !== "src") {
+          allSegments.add(part.toLowerCase());
+        }
+      }
+    }
+
+    // Find which segment is mentioned in the query
+    const words = q.split(/[^a-zA-Z0-9_$]+/);
+    let matchedDir: string | null = null;
+    
+    // Sort segments by length descending so longer matching segments take precedence
+    const sortedSegments = [...allSegments].sort((a, b) => b.length - a.length);
+    for (const seg of sortedSegments) {
+      if (words.includes(seg)) {
+        matchedDir = seg;
+        break;
+      }
+    }
+
+    if (matchedDir) {
+      // Return ALL files in the matched directory (and its subdirectories)
+      // bypass limit for module-level queries!
+      const matchedFiles = filePaths.filter((p) => {
+        const parts = p.split(/[/\\]/);
+        parts.pop(); // remove filename
+        return parts.some((part) => part.toLowerCase() === matchedDir);
+      });
+      if (matchedFiles.length > 0) {
+        return matchedFiles;
+      }
+    }
+  }
 
   const terms = q.split(/\s+/g).filter((t) => t.length > 1);
   const scored = filePaths.map((p) => {
